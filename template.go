@@ -17,12 +17,21 @@ type Template interface {
 func FS(fs fs.FS) Option {
 	return func(t *templates) {
 		t.assets = fs
+		t.funcMap = make(template.FuncMap)
 	}
 }
 
-func FuncMap(funcMap template.FuncMap) Option {
+func FuncMap(funcs template.FuncMap) Option {
 	return func(t *templates) {
-		t.funcMap = funcMap
+		for name, fn := range funcs {
+			t.funcMap[name] = fn
+		}
+	}
+}
+
+func Func(name string, fn any) Option {
+	return func(t *templates) {
+		t.funcMap[name] = fn
 	}
 }
 
@@ -74,7 +83,7 @@ func load(assets fs.FS, base string, funcMap template.FuncMap, components *templ
 	}
 
 	err := fs.WalkDir(assets, base, func(path string, d fs.DirEntry, err error) error {
-		if d.IsDir() {
+		if err != nil || d.IsDir() {
 			return nil
 		}
 
