@@ -46,12 +46,13 @@ func New(options ...Option) Template {
 		panic(`nil fs.FS`)
 	}
 
-	t.template = template.Must(
-		load(t.assets, `page`, t.funcMap, template.Must(
-			load(t.assets, `component`, t.funcMap, template.Must(
-				load(t.assets, `layout`, t.funcMap, nil),
-			)),
-		)))
+	t.template = template.Must(load(t.assets, list(t.assets, `component`), t.funcMap,
+		template.Must(load(t.assets, list(t.assets, `layout`), t.funcMap, nil))),
+	)
+
+	for _, page := range list(t.assets, `page`) {
+		t.page = append(t.page, template.Must(load(t.assets, []string{page}, t.funcMap, t.template)))
+	}
 
 	return t
 }
@@ -60,52 +61,69 @@ type templates struct {
 	assets   fs.FS
 	funcMap  template.FuncMap
 	template *template.Template
+	page     []*template.Template
 }
 
 func (t templates) Render(w io.Writer, name string, data any) error {
-	template := t.template.Lookup(name)
+	var template *template.Template
+
+	if strings.HasPrefix(name, `page/`) {
+		for _, page := range t.page {
+			template = page.Lookup(name)
+			if template != nil {
+				break
+			}
+		}
+	} else {
+		template = t.template.Lookup(name)
+	}
+
 	if template == nil {
 		return fmt.Errorf(`template %q not found`, name)
 	}
 
-	if strings.HasPrefix(name, `component/`) {
+	if strings.HasPrefix(name, `component/`) || strings.HasPrefix(name, `layout/`) {
 		return template.Execute(w, data)
 	}
 
 	return template.ExecuteTemplate(w, `base`, data)
 }
 
-func load(assets fs.FS, base string, funcMap template.FuncMap, components *template.Template) (*template.Template, error) {
-	root := template.New(base)
-
-	if components != nil {
-		root = template.Must(components.Clone()).New(base)
-	}
-
-	err := fs.WalkDir(assets, base, func(path string, d fs.DirEntry, err error) error {
+func list(assets fs.FS, base string) (paths []string) {
+	_ = fs.WalkDir(assets, base, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return nil
 		}
 
-		data, err := fs.ReadFile(assets, path)
-		if err != nil {
-			return err
-		}
+		paths = append(paths, path)
 
-		name := templateName(base, path)
-		_, err = root.New(name).Funcs(funcMap).Parse(string(data))
-
-		return err
+		return nil
 	})
 
-	if err != nil {
-		return nil, err
+	return
+}
+
+func load(assets fs.FS, paths []string, funcMap template.FuncMap, components *template.Template) (*template.Template, error) {
+	root := template.New(``)
+
+	if components != nil {
+		root = template.Must(components.Clone()).New(``)
+	}
+
+	for _, path := range paths {
+		data, err := fs.ReadFile(assets, path)
+		if err != nil {
+			return nil, err
+		}
+
+		name := templateName(path)
+		_, err = root.New(name).Funcs(funcMap).Parse(string(data))
 	}
 
 	return root, nil
 }
 
-func templateName(base, path string) string {
+func templateName(path string) string {
 	if strings.Contains(path, `.`) {
 		return strings.Split(path, `.`)[0]
 	}
